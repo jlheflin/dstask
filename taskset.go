@@ -17,12 +17,17 @@ type TaskSet struct {
 	tasks []*Task
 
 	// indices
-	tasksByID   map[int]*Task
-	tasksByUUID map[string]*Task
+	tasksByID         map[int]*Task
+	tasksByUUID       map[string]*Task
+	tasksByResolvedID map[int]*Task
 
 	// program metadata
 	idsFilePath string
 	repoPath    string
+
+	// persistent resolved IDs; only loaded when resolved tasks are
+	resolvedIds      *ResolvedIdsState
+	resolvedIdsDirty bool
 }
 
 type Project struct {
@@ -46,6 +51,7 @@ func LoadTaskSet(repoPath, idsFilePath string, includeResolved bool) (*TaskSet, 
 	var ts TaskSet
 	ts.tasksByUUID = make(map[string]*Task)
 	ts.tasksByID = make(map[int]*Task)
+	ts.tasksByResolvedID = make(map[int]*Task)
 
 	ts.idsFilePath = idsFilePath
 	ts.repoPath = repoPath
@@ -101,6 +107,10 @@ func LoadTaskSet(repoPath, idsFilePath string, includeResolved bool) (*TaskSet, 
 				continue
 			}
 		}
+	}
+
+	if includeResolved {
+		ts.assignResolvedIDs()
 	}
 
 	// hide some tasks by default. This is useful for things like templates and
@@ -173,6 +183,94 @@ func (ts *TaskSet) SortByResolved(dir SortByDirection) {
 	}
 }
 
+// assignResolvedIDs gives resolved tasks their r-numbers. Numbers are stored
+// locally, so a resolved task keeps its number permanently. Tasks without one
+// yet (newly resolved, or all of them on first run) get the next numbers in
+// the order they were resolved, oldest first. Numbers of reopened or removed
+// tasks are retired, never reused.
+func (ts *TaskSet) assignResolvedIDs() {
+	state := LoadResolvedIds(ResolvedIdsFilePath(ts.idsFilePath))
+	ts.resolvedIds = &state
+
+	var unnumbered []*Task
+
+	stillResolved := make(map[string]bool)
+
+	for _, task := range ts.tasks {
+		if task.Status != STATUS_RESOLVED {
+			continue
+		}
+
+		stillResolved[task.UUID] = true
+
+		id := state.IDs[task.UUID]
+		if id > 0 && ts.tasksByResolvedID[id] == nil {
+			task.ResolvedID = id
+			ts.tasksByResolvedID[id] = task
+		} else {
+			unnumbered = append(unnumbered, task)
+		}
+	}
+
+	sort.SliceStable(unnumbered, func(i, j int) bool {
+		a, b := unnumbered[i], unnumbered[j]
+		if !a.Resolved.Equal(b.Resolved) {
+			return a.Resolved.Before(b.Resolved)
+		}
+
+		if !a.Created.Equal(b.Created) {
+			return a.Created.Before(b.Created)
+		}
+
+		return a.UUID < b.UUID
+	})
+
+	for _, task := range unnumbered {
+		for ts.tasksByResolvedID[state.Next] != nil {
+			state.Next++
+		}
+
+		task.ResolvedID = state.Next
+		ts.tasksByResolvedID[task.ResolvedID] = task
+		state.IDs[task.UUID] = task.ResolvedID
+		state.Next++
+		ts.resolvedIdsDirty = true
+	}
+
+	// forget tasks that are no longer resolved (reopened or removed outside
+	// this TaskSet, e.g. by undo or a manual edit)
+	for uuid := range state.IDs {
+		if !stillResolved[uuid] {
+			delete(state.IDs, uuid)
+			ts.resolvedIdsDirty = true
+		}
+	}
+
+	if ts.resolvedIdsDirty {
+		ts.saveResolvedIds()
+	}
+}
+
+func (ts *TaskSet) saveResolvedIds() {
+	if ts.resolvedIds == nil || !ts.resolvedIdsDirty {
+		return
+	}
+
+	ts.resolvedIds.Save(ResolvedIdsFilePath(ts.idsFilePath))
+	ts.resolvedIdsDirty = false
+}
+
+// nextFreeID returns the lowest unused open-task ID.
+func (ts *TaskSet) nextFreeID() int {
+	for id := 1; id <= MAX_TASKS_OPEN; id++ {
+		if ts.tasksByID[id] == nil {
+			return id
+		}
+	}
+
+	return 0
+}
+
 // MustLoadTask is the same as LoadTask, except it exits on error.
 func (ts *TaskSet) MustLoadTask(task Task) Task {
 	newTask, err := ts.LoadTask(task)
@@ -209,13 +307,7 @@ func (ts *TaskSet) LoadTask(task Task) (Task, error) {
 
 	// pick one if task isn't resolved and ID isn't there
 	if task.ID == 0 && task.Status != STATUS_RESOLVED {
-		for id := 1; id <= MAX_TASKS_OPEN; id++ {
-			if ts.tasksByID[id] == nil {
-				task.ID = id
-
-				break
-			}
-		}
+		task.ID = ts.nextFreeID()
 	}
 
 	if task.Created.IsZero() {
@@ -265,8 +357,24 @@ func (ts *TaskSet) UpdateTask(task Task) error {
 		return errors.New("refusing to resolve task with incomplete tasklist")
 	}
 
+	reopened := old.Status == STATUS_RESOLVED && task.Status != STATUS_RESOLVED
+
 	if task.Status == STATUS_RESOLVED {
 		task.ID = 0
+	}
+
+	if reopened {
+		// give the task a fresh open ID, and forget its resolved identity
+		delete(ts.tasksByResolvedID, old.ResolvedID)
+
+		if ts.resolvedIds != nil {
+			delete(ts.resolvedIds.IDs, task.UUID)
+			ts.resolvedIdsDirty = true
+		}
+
+		task.ResolvedID = 0
+		task.Resolved = time.Time{}
+		task.ID = ts.nextFreeID()
 	}
 
 	if task.Status == STATUS_RESOLVED && task.Resolved.IsZero() {
@@ -276,6 +384,10 @@ func (ts *TaskSet) UpdateTask(task Task) error {
 	task.WritePending = true
 	// existing pointer must point to address of new task copied
 	*ts.tasksByUUID[task.UUID] = task
+
+	if reopened && task.ID > 0 {
+		ts.tasksByID[task.ID] = ts.tasksByUUID[task.UUID]
+	}
 
 	return nil
 }
@@ -311,6 +423,47 @@ func (ts *TaskSet) MustGetByID(id int) Task {
 	}
 
 	return task
+}
+
+// GetByResolvedID returns a resolved task by its r-number. The TaskSet must
+// have been loaded with resolved tasks included.
+func (ts *TaskSet) GetByResolvedID(id int) (Task, error) {
+	if ts.tasksByResolvedID[id] == nil {
+		return Task{}, fmt.Errorf("no resolved task with ID %s%d exists", RESOLVED_ID_PREFIX, id)
+	}
+
+	return *ts.tasksByResolvedID[id], nil
+}
+
+// MustGetByUUID returns a copy of the task with the given UUID, exiting if
+// it does not exist.
+func (ts *TaskSet) MustGetByUUID(uuid string) Task {
+	if ts.tasksByUUID[uuid] == nil {
+		ExitFail("no task with UUID %s exists", uuid)
+	}
+
+	return *ts.tasksByUUID[uuid]
+}
+
+// MustGetByQueryIDs returns every task addressed by the query, open IDs first
+// then resolved IDs, exiting if any does not exist.
+func (ts *TaskSet) MustGetByQueryIDs(query Query) []Task {
+	tasks := make([]Task, 0, len(query.IDs)+len(query.ResolvedIDs))
+
+	for _, id := range query.IDs {
+		tasks = append(tasks, ts.MustGetByID(id))
+	}
+
+	for _, id := range query.ResolvedIDs {
+		task, err := ts.GetByResolvedID(id)
+		if err != nil {
+			ExitFail(err.Error())
+		}
+
+		tasks = append(tasks, task)
+	}
+
+	return tasks
 }
 
 func (ts *TaskSet) GetByID(id int) (Task, error) {
@@ -440,6 +593,7 @@ func (ts *TaskSet) SavePendingChanges() {
 	// locally. This replaced a system where tasks recorded their IDs, which
 	// can create merge conflicts in some (uncommon) cases.
 	ids.Save(ts.idsFilePath)
+	ts.saveResolvedIds()
 }
 
 type SortByDirection string

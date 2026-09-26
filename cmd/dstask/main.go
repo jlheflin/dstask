@@ -113,6 +113,11 @@ func main() {
 			dstask.ExitFail(err.Error())
 		}
 
+	case dstask.CMD_REOPEN:
+		if err := dstask.CommandReopen(conf, ctx, query); err != nil {
+			dstask.ExitFail(err.Error())
+		}
+
 	case dstask.CMD_CONTEXT:
 		if err := dstask.CommandContext(conf, state, ctx, query); err != nil {
 			dstask.ExitFail(err.Error())

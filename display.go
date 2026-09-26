@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -83,7 +82,7 @@ func (ts *TaskSet) renderTable(truncate bool) error {
 		task.Display()
 
 		if task.Notes != "" {
-			fmt.Printf("\nNotes on task %d:\n\033[38;5;245m%s\033[0m\n\n", task.ID, task.Notes)
+			fmt.Printf("\nNotes on task %s:\n\033[38;5;245m%s\033[0m\n\n", task.Ref(), task.Notes)
 		}
 
 		return nil
@@ -113,7 +112,7 @@ func (ts *TaskSet) renderTable(truncate bool) error {
 				[]string{
 					// id should be at least 2 chars wide to match column header
 					// (headers can be truncated)
-					fmt.Sprintf("%-2d", t.ID),
+					fmt.Sprintf("%-2s", t.Ref()),
 					t.Priority,
 					strings.Join(t.Tags, " "),
 					t.ParseDueDateToStr(),
@@ -145,7 +144,7 @@ func (task *Task) Display() {
 		"Value",
 	)
 
-	table.AddRow([]string{"ID", strconv.Itoa(task.ID)}, RowStyle{})
+	table.AddRow([]string{"ID", task.Ref()}, RowStyle{})
 	table.AddRow([]string{"Priority", task.Priority}, RowStyle{})
 	table.AddRow([]string{"Summary", task.Summary}, RowStyle{})
 	table.AddRow([]string{"Status", task.Status}, RowStyle{})
@@ -247,6 +246,7 @@ func (ts TaskSet) DisplayByWeek() {
 
 				table = NewTable(
 					w,
+					"ID",
 					"Resolved",
 					"Priority",
 					"Tags",
@@ -258,6 +258,7 @@ func (ts TaskSet) DisplayByWeek() {
 
 			table.AddRow(
 				[]string{
+					t.Ref(),
 					t.Resolved.Format("Mon 2"),
 					t.Priority,
 					strings.Join(t.Tags, " "),

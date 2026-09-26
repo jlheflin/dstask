@@ -194,6 +194,7 @@ start               : Change task status to active
 note                : Append to or edit note for a task
 stop                : Change task status to pending
 done                : Resolve a task
+reopen              : Move resolved task(s) back to pending
 context             : Set global context for task list and new tasks (use "none" to set no context)
 modify              : Set attributes for a task
 edit                : Edit task with text editor

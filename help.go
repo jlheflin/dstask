@@ -131,6 +131,13 @@ Example: dstask 15 done replaced some hardware
 
 Resolve a task. Optional text may be added, which will be appended to the note.
 `
+	case CMD_REOPEN:
+		helpStr = `Usage: dstask <rid...> reopen
+Example: dstask r12 reopen
+
+Move a resolved task back to pending. It is given a new open task ID. Resolved
+task IDs (r1, r2, ...) are listed by show-resolved.
+`
 	case CMD_CONTEXT:
 		helpStr = `Usage: dstask context <filter>
 Example: dstask context +work -bug
@@ -239,6 +246,9 @@ for a substring search of description and notes.
 Cmd and IDs can be swapped, multiple IDs can be specified for batch
 operations.
 
+Resolved tasks have their own IDs prefixed with r (r1, r2, ...), shown by
+show-resolved. They work with edit, modify, note, open, remove and reopen.
+
 run "dstask help <cmd>" for command specific help.
 
 Add -- to ignore the current context. / can be used when adding tasks to note
@@ -254,6 +264,7 @@ start               : Change task status to active
 note                : Append to or edit note for a task
 stop                : Change task status to pending
 done                : Resolve a task
+reopen              : Move resolved task(s) back to pending
 context             : Set global context for task list and new tasks (use "none" to set no context)
 modify              : Change task attributes specified on command line
 edit                : Edit task with text editor

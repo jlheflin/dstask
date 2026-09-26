@@ -13,8 +13,10 @@ import (
 // when referring to tasks by ID, NON_RESOLVED_STATUSES must be loaded exclusively --
 // even if the filter is set to show issues that have only some statuses.
 type Query struct {
-	Cmd           string
-	IDs           []int
+	Cmd string
+	IDs []int
+	// IDs of resolved tasks, typed as r1, r2, ...
+	ResolvedIDs   []int
 	Tags          []string
 	AntiTags      []string
 	Project       string
@@ -35,6 +37,10 @@ func (query Query) String() string {
 
 	for _, id := range query.IDs {
 		args = append(args, strconv.Itoa(id))
+	}
+
+	for _, id := range query.ResolvedIDs {
+		args = append(args, RESOLVED_ID_PREFIX+strconv.Itoa(id))
 	}
 
 	for _, tag := range query.Tags {
@@ -88,6 +94,17 @@ func (query Query) PrintContextDescription() {
 	}
 }
 
+// HasIDs returns true if any open or resolved task IDs were given.
+func (query Query) HasIDs() bool {
+	return len(query.IDs) > 0 || len(query.ResolvedIDs) > 0
+}
+
+// NeedsResolved returns true if resolved tasks must be loaded to satisfy the
+// query, which is only the case when they are addressed directly.
+func (query Query) NeedsResolved() bool {
+	return len(query.ResolvedIDs) > 0
+}
+
 // HasOperators returns true if the query has positive or negative projects/tags,
 // dueDate, priorities or template.
 func (query Query) HasOperators() bool {
@@ -106,6 +123,8 @@ func ParseQuery(args ...string) Query {
 	var cmd string
 
 	var ids []int
+
+	var resolvedIDs []int
 
 	var tags []string
 
@@ -158,6 +177,12 @@ func ParseQuery(args ...string) Query {
 			continue
 		}
 
+		if id, ok := parseResolvedID(lcItem); !IDsExhausted && ok {
+			resolvedIDs = append(resolvedIDs, id)
+
+			continue
+		}
+
 		if item == IGNORE_CONTEXT_KEYWORD {
 			ignoreContext = true
 		} else if item == NOTE_MODE_KEYWORD {
@@ -196,6 +221,7 @@ func ParseQuery(args ...string) Query {
 	return Query{
 		Cmd:           cmd,
 		IDs:           ids,
+		ResolvedIDs:   resolvedIDs,
 		Tags:          tags,
 		AntiTags:      antiTags,
 		Project:       project,
@@ -259,4 +285,18 @@ func (query *Query) Merge(q2 Query) Query {
 	}
 
 	return q
+}
+
+// parseResolvedID parses a resolved task reference such as "r12".
+func parseResolvedID(item string) (int, bool) {
+	if !strings.HasPrefix(item, RESOLVED_ID_PREFIX) {
+		return 0, false
+	}
+
+	id, err := strconv.Atoi(item[len(RESOLVED_ID_PREFIX):])
+	if err != nil || id < 1 {
+		return 0, false
+	}
+
+	return id, true
 }

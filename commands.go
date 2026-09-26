@@ -142,17 +142,16 @@ func CommandEdit(conf Config, ctx, query Query) error {
 		return errors.New("operators not valid in this context")
 	}
 
-	if len(query.IDs) == 0 {
+	if !query.HasIDs() {
 		return errors.New("no ID(s) specified")
 	}
 
-	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, false)
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
 	if err != nil {
 		return err
 	}
 
-	for _, id := range query.IDs {
-		task := ts.MustGetByID(id)
+	for _, task := range ts.MustGetByQueryIDs(query) {
 		data, err := yaml.Marshal(&task)
 		if err != nil {
 			// TODO present error to user, specific error message is important
@@ -227,12 +226,12 @@ func CommandModify(conf Config, ctx, query Query) error {
 		return errors.New("no operations specified")
 	}
 
-	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, false)
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
 	if err != nil {
 		return err
 	}
 
-	if len(query.IDs) == 0 {
+	if !query.HasIDs() {
 		ts.Filter(ctx)
 
 		if StdoutIsTTY() {
@@ -249,8 +248,7 @@ func CommandModify(conf Config, ctx, query Query) error {
 			MustGitCommit(conf.Repo, "Modified %s", task)
 		}
 	} else {
-		for _, id := range query.IDs {
-			task := ts.MustGetByID(id)
+		for _, task := range ts.MustGetByQueryIDs(query) {
 			task.Modify(query)
 			ts.MustUpdateTask(task)
 			ts.SavePendingChanges()
@@ -264,16 +262,18 @@ func CommandModify(conf Config, ctx, query Query) error {
 // CommandNext prints the unresolved tasks associated with the current context.
 // This is the default command.
 func CommandNext(conf Config, ctx, query Query) error {
-	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, false)
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
 	if err != nil {
 		return err
 	}
 
-	if len(query.IDs) > 0 {
+	if query.HasIDs() {
 		// addressing task by ID, ignores context
 		if query.HasOperators() {
 			return errors.New("operators not valid when addressing task by ID")
 		}
+
+		ts.UnHide()
 	} else {
 		// apply context
 		query = query.Merge(ctx)
@@ -289,7 +289,7 @@ func CommandNext(conf Config, ctx, query Query) error {
 
 // CommandNote edits or prints the markdown note associated with the task.
 func CommandNote(conf Config, ctx, query Query) error {
-	if len(query.IDs) == 0 {
+	if !query.HasIDs() {
 		return errors.New("no ID(s) specified")
 	}
 
@@ -297,13 +297,12 @@ func CommandNote(conf Config, ctx, query Query) error {
 		return errors.New("operators not valid in this context")
 	}
 
-	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, false)
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
 	if err != nil {
 		return err
 	}
 
-	for _, id := range query.IDs {
-		task := ts.MustGetByID(id)
+	for _, task := range ts.MustGetByQueryIDs(query) {
 		if query.Text != "" {
 			if task.Notes == "" {
 				task.Notes = query.Text
@@ -335,7 +334,7 @@ func CommandNote(conf Config, ctx, query Query) error {
 
 // CommandOpen opens a task URL in the browser, if the task has a URL.
 func CommandOpen(conf Config, ctx, query Query) error {
-	if len(query.IDs) == 0 {
+	if !query.HasIDs() {
 		return errors.New("no ID(s) specified")
 	}
 
@@ -343,13 +342,12 @@ func CommandOpen(conf Config, ctx, query Query) error {
 		return errors.New("operators not valid in this context")
 	}
 
-	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, false)
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
 	if err != nil {
 		return err
 	}
 
-	for _, id := range query.IDs {
-		task := ts.MustGetByID(id)
+	for _, task := range ts.MustGetByQueryIDs(query) {
 		urls := xurls.Relaxed().FindAllString(task.Summary+" "+task.Notes, -1)
 
 		if len(urls) == 0 {
@@ -366,7 +364,7 @@ func CommandOpen(conf Config, ctx, query Query) error {
 
 // CommandRemove removes a task by ID from the database.
 func CommandRemove(conf Config, ctx, query Query) error {
-	if len(query.IDs) == 0 {
+	if !query.HasIDs() {
 		return errors.New("no ID(s) specified")
 	}
 
@@ -374,25 +372,23 @@ func CommandRemove(conf Config, ctx, query Query) error {
 		return errors.New("operators not valid in this context")
 	}
 
-	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, false)
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
 	if err != nil {
 		return err
 	}
 
-	for _, id := range query.IDs {
-		task := ts.MustGetByID(id)
+	for _, task := range ts.MustGetByQueryIDs(query) {
 		fmt.Println(task)
 	}
 
 	if StdoutIsTTY() {
 		ConfirmOrAbort(
 			"\nThe above %d task(s) will be deleted without checking subtasks. Continue?",
-			len(query.IDs),
+			len(query.IDs)+len(query.ResolvedIDs),
 		)
 	}
 
-	for _, id := range query.IDs {
-		task := ts.MustGetByID(id)
+	for _, task := range ts.MustGetByQueryIDs(query) {
 		// Mark our task for deletion
 		task.Deleted = true
 
@@ -406,6 +402,38 @@ func CommandRemove(conf Config, ctx, query Query) error {
 		} else {
 			MustGitCommit(conf.Repo, "Removed: %s", task)
 		}
+	}
+
+	return nil
+}
+
+// CommandReopen moves resolved tasks back to pending, giving them a new ID.
+func CommandReopen(conf Config, ctx, query Query) error {
+	if !query.HasIDs() {
+		return errors.New("no ID(s) specified")
+	}
+
+	if query.HasOperators() {
+		return errors.New("operators not valid in this context")
+	}
+
+	ts, err := LoadTaskSet(conf.Repo, conf.IDsFile, query.NeedsResolved())
+	if err != nil {
+		return err
+	}
+
+	for _, task := range ts.MustGetByQueryIDs(query) {
+		if task.Status != STATUS_RESOLVED {
+			return fmt.Errorf("task %s is not resolved", task)
+		}
+
+		task.Status = STATUS_PENDING
+		ts.MustUpdateTask(task)
+		ts.SavePendingChanges()
+
+		reopened := ts.MustGetByUUID(task.UUID)
+		MustGitCommit(conf.Repo, "Reopened %s", reopened)
+		fmt.Printf("Reopened %s\n", reopened)
 	}
 
 	return nil

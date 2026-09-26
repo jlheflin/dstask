@@ -34,6 +34,12 @@ type Task struct {
 	// from IDCache or on-the-fly.
 	ID int `json:"id" yaml:"-"`
 
+	// used to address resolved tasks as r1, r2, ... Assigned in order of
+	// resolution and stored locally (see ResolvedIdsState), so a task keeps
+	// its number while it stays resolved. Only populated when resolved tasks
+	// are loaded.
+	ResolvedID int `json:"resolvedId,omitempty" yaml:"-"`
+
 	// Deleted, if true, marks this task for deletion
 	Deleted bool `json:"-" yaml:"-"`
 
@@ -144,9 +150,23 @@ func unmarshalTask(path string, finfo os.DirEntry, ids IdsMap, status string) (T
 	return t, nil
 }
 
-func (t Task) String() string {
+// Ref returns the identifier a user types to address this task: "12" for an
+// open task, "r12" for a resolved one, or "" if it has neither.
+func (t Task) Ref() string {
 	if t.ID > 0 {
-		return fmt.Sprintf("%v: %s", t.ID, t.Summary)
+		return fmt.Sprint(t.ID)
+	}
+
+	if t.ResolvedID > 0 {
+		return fmt.Sprintf("%s%d", RESOLVED_ID_PREFIX, t.ResolvedID)
+	}
+
+	return ""
+}
+
+func (t Task) String() string {
+	if ref := t.Ref(); ref != "" {
+		return fmt.Sprintf("%s: %s", ref, t.Summary)
 	}
 
 	return t.Summary
@@ -154,7 +174,9 @@ func (t Task) String() string {
 
 func (t *Task) MatchesFilter(query Query) bool {
 	// IDs were specified but none match (OR logic)
-	if len(query.IDs) > 0 && !IntSliceContains(query.IDs, t.ID) {
+	if query.HasIDs() &&
+		!(t.ID > 0 && IntSliceContains(query.IDs, t.ID)) &&
+		!(t.ResolvedID > 0 && IntSliceContains(query.ResolvedIDs, t.ResolvedID)) {
 		return false
 	}
 

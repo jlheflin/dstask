@@ -39,6 +39,7 @@ const (
 	CMD_STOP             = "stop"
 	CMD_DONE             = "done"
 	CMD_RESOLVE          = "resolve"
+	CMD_REOPEN           = "reopen"
 	CMD_CONTEXT          = "context"
 	CMD_MODIFY           = "modify"
 	CMD_EDIT             = "edit"
@@ -76,6 +77,10 @@ const (
 
 	MAX_TASKS_OPEN    = 10000
 	TASK_FILENAME_LEN = 40
+
+	// resolved tasks are addressed as r1, r2, ... so they never collide with
+	// the IDs of open tasks.
+	RESOLVED_ID_PREFIX = "r"
 
 	// if the terminal is too short, show this many tasks anyway.
 	MIN_TASKS_SHOWN = 8
@@ -135,6 +140,7 @@ var VALID_STATUS_TRANSITIONS = [][]string{
 	{STATUS_PENDING, STATUS_RESOLVED},
 	{STATUS_PAUSED, STATUS_RESOLVED},
 	{STATUS_ACTIVE, STATUS_RESOLVED},
+	{STATUS_RESOLVED, STATUS_PENDING}, // reopen
 	{STATUS_PENDING, STATUS_TEMPLATE},
 }
 
@@ -162,6 +168,7 @@ var ALL_CMDS = []string{
 	CMD_STOP,
 	CMD_DONE,
 	CMD_RESOLVE,
+	CMD_REOPEN,
 	CMD_CONTEXT,
 	CMD_MODIFY,
 	CMD_EDIT,

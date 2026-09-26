@@ -120,3 +120,46 @@ func LoadIds(idsFilePath string) IdsMap {
 
 	return ids
 }
+
+// ResolvedIdsState is a persistent DB of UUID -> resolved ID (the number in
+// r1, r2, ...). It is local to this machine, like IdsMap. Next is the number
+// the next newly resolved task will get; numbers are never reused, so a
+// resolved task keeps its number for as long as it stays resolved.
+type ResolvedIdsState struct {
+	Next int
+	IDs  map[string]int
+}
+
+// ResolvedIdsFilePath returns where resolved IDs are stored: alongside the
+// open task IDs file.
+func ResolvedIdsFilePath(idsFilePath string) string {
+	return filepath.Join(filepath.Dir(idsFilePath), "resolved-ids.bin")
+}
+
+func (state *ResolvedIdsState) Save(filePath string) {
+	if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+		ExitFail("Failed to create directories for %s: %s", filePath, err)
+	}
+
+	mustWriteGob(filePath, state)
+}
+
+func LoadResolvedIds(filePath string) ResolvedIdsState {
+	state := ResolvedIdsState{Next: 1, IDs: make(map[string]int)}
+
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return state
+	}
+
+	mustReadGob(filePath, &state)
+
+	if state.IDs == nil {
+		state.IDs = make(map[string]int)
+	}
+
+	if state.Next < 1 {
+		state.Next = 1
+	}
+
+	return state
+}
