@@ -138,13 +138,25 @@ func (ts *TaskSet) SortByCreated(dir SortByDirection) {
 		// Oldest first
 		sort.SliceStable(
 			ts.tasks,
-			func(i, j int) bool { return ts.tasks[i].Created.Before(ts.tasks[j].Created) },
+			func(i, j int) bool {
+				a, b := ts.tasks[i].Due, ts.tasks[j].Due;
+				if a.IsZero() != b.IsZero() {
+					return b.IsZero()
+				};
+				return a.Before(b)
+				  },
 		)
 	case Descending:
 		// Newest first
 		sort.SliceStable(
 			ts.tasks,
-			func(i, j int) bool { return ts.tasks[i].Created.After(ts.tasks[j].Created) },
+			func(i, j int) bool {
+				a, b := ts.tasks[i].Due, ts.tasks[j].Due;
+				if a.IsZero() != b.IsZero() {
+					return b.IsZero()
+				};
+				return a.After(b)
+				  },
 		)
 	}
 }
